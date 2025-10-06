@@ -40,3 +40,19 @@ a {
     color-scheme: dark;
   }
 }
+
+html, body, #__next {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+main, div {
+  box-sizing: border-box;
+}
+
+img {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
