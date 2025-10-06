@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../lib/prisma"; // ← 路徑：從 app/api/orders 到 lib/prisma
+import { prisma } from "../../../lib/prisma"; // ← 路徑：從 app/api/orders 到 lib/prisma
 
 export const runtime = "nodejs";
 

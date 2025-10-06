@@ -41,3 +41,8 @@ yarn-error.log*
 next-env.d.ts
 
 /app/generated/prisma
+
+
+# 讓 app/lib 不被忽略
+!app/lib/
+!app/lib/prisma.js
