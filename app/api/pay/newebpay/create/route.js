@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import crypto from "crypto";
-import prisma from "../../../../lib/prisma";  // 往上四層：create → newebpay → pay → api → app/lib
+import prisma from "@/lib/prisma";
 
 export const runtime = "nodejs";
 
