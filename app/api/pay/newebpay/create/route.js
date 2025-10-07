@@ -44,7 +44,7 @@ export async function POST(req) {
 
     const notifyBase = process.env.NEWEBPAY_NOTIFY_BASE_URL || new URL(req.url).origin;
     const clientBase = process.env.CLIENT_BASE_URL || new URL(req.url).origin;
-
+    
     const MerchantOrderNo = order.orderNo.replace(/[^A-Za-z0-9_]/g, "_").slice(0, 20);
     const TimeStamp = Math.floor(Date.now() / 1000);
     const Amt = order.total;
@@ -54,6 +54,7 @@ export async function POST(req) {
     const ReturnURL = `${notifyBase}/api/pay/newebpay/notify`; // 背景通知
     const NotifyURL = ReturnURL;                                 // 同一路徑即可
     const ClientBackURL = `${clientBase}/orders/${order.orderNo}`;
+    const OrderResultURL = `${clientBase}/api/pay/newebpay/result`; // 自動回商店（新增）
 
     const trade = {
       MerchantID,
@@ -69,6 +70,7 @@ export async function POST(req) {
       ReturnURL,
       NotifyURL,
       ClientBackURL,
+      OrderResultURL, 
       CREDIT: 1,           // 啟用信用卡
       // VACC: 1,          // 要測 ATM 再打開
       // CVS: 1,           // 要測超商代碼再打開
