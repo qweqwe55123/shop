@@ -10,20 +10,12 @@ const FREE_SHIP_THRESHOLD = Number(process.env.FREE_SHIP ?? 999);
 
 function genOrderNo() {
   const d = new Date();
-  // yymmdd（6 碼）：例如 241007
   const ymd =
     d.getFullYear().toString().slice(2) +
     String(d.getMonth() + 1).padStart(2, "0") +
     String(d.getDate()).padStart(2, "0");
-
-  // 產生 6 碼英數（A–Z, 0–9）
-  const rand = Math.random()
-    .toString(36)
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "")
-    .slice(0, 6);
-
-  // 只用英數與底線，整體控制在 20 字內（藍新規範）
+  const rand = Math.random().toString(36).toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+  // 僅英數/底線，總長 ≤ 20（藍新規範）
   return `HEM_${ymd}_${rand}`.slice(0, 20);
 }
 

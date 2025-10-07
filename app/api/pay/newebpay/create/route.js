@@ -1,13 +1,11 @@
 import { NextResponse } from "next/server";
 import crypto from "crypto";
-import prisma from "../../../../../lib/prisma";
+import prisma from "../../../../lib/prisma";  // 往上四層：create → newebpay → pay → api → app/lib
 
 export const runtime = "nodejs";
 
-// ── NewebPay MPG（Sandbox 預設）──
 const MPG_URL = process.env.NEWEBPAY_MPG_URL || "https://ccore.newebpay.com/MPG/mpg_gateway";
 
-// 小工具
 const toQuery = (obj) =>
   Object.entries(obj)
     .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
@@ -19,16 +17,9 @@ const aesEncrypt = (data, key, iv) => {
 };
 const sha256 = (str) => crypto.createHash("sha256").update(str).digest("hex").toUpperCase();
 
-const isHttpsPortless = (u) => {
-  try {
-    const url = new URL(u);
-    return url.protocol === "https:" && (!url.port || url.port === "443");
-  } catch { return false; }
-};
-
 export async function POST(req) {
   try {
-    // 支援 <form> 與 JSON 兩種呼叫
+    // 支援 form 或 JSON
     const form = await req.formData().catch(async () => {
       const body = await req.json();
       const fd = new FormData();
@@ -38,14 +29,12 @@ export async function POST(req) {
     const orderNo = (form.get("orderNo") || "").toString().trim();
     if (!orderNo) return NextResponse.json({ error: "ORDER_NO_REQUIRED" }, { status: 400 });
 
-    // 取訂單
     const order = await prisma.order.findUnique({ where: { orderNo } });
     if (!order) return NextResponse.json({ error: "ORDER_NOT_FOUND" }, { status: 404 });
     if (order.status === "PAID") {
       return NextResponse.redirect(new URL(`/orders/${orderNo}`, req.url));
     }
 
-    // ── 環境變數檢查 ──
     const MerchantID = process.env.NEWEBPAY_MERCHANT_ID || "";
     const HashKey = process.env.NEWEBPAY_HASH_KEY || "";
     const HashIV = process.env.NEWEBPAY_HASH_IV || "";
@@ -53,35 +42,18 @@ export async function POST(req) {
       return NextResponse.json({ error: "NEWEBPAY_ENV_MISSING" }, { status: 500 });
     }
 
-    // 分離 base：通知（外網 https/443）與使用者返回（可本機）
-    const notifyBase = process.env.NEWEBPAY_NOTIFY_BASE_URL || process.env.BASE_URL || new URL(req.url).origin;
-    const clientBase = process.env.CLIENT_BASE_URL || process.env.BASE_URL || new URL(req.url).origin;
+    const notifyBase = process.env.NEWEBPAY_NOTIFY_BASE_URL || new URL(req.url).origin;
+    const clientBase = process.env.CLIENT_BASE_URL || new URL(req.url).origin;
 
-    // 藍新會檢查 Notify/Return URL 不能帶非 80/443 的 port
-    if (!isHttpsPortless(`${notifyBase}`)) {
-      // 能跳轉但收不到 notify；至少避免送出被擋
-      console.warn("Notify base is not https:443, notify will fail:", notifyBase);
-    }
-
-    // ── 參數（MPG v2.0）──
+    const MerchantOrderNo = order.orderNo.replace(/[^A-Za-z0-9_]/g, "_").slice(0, 20);
     const TimeStamp = Math.floor(Date.now() / 1000);
     const Amt = order.total;
     const ItemDesc = "真空磁吸手機架";
     const Email = order.customerEmail || "test@example.com";
 
-    // 清洗成藍新允許的訂單編號（保底）
-    const MerchantOrderNo = order.orderNo.replace(/[^A-Za-z0-9_]/g, "_").slice(0, 20);
-
     const ReturnURL = `${notifyBase}/api/pay/newebpay/notify`; // 背景通知
-    const NotifyURL = ReturnURL; // 有些文件兩個名詞，實務同一路
-    const ClientBackURL = `${clientBase}/orders/${order.orderNo}`; // 使用者返回
-
-    // 可選：指定開哪些付款方式（不指定也行，預設信用卡）
-    const paymentOpts = {
-      CREDIT: 1, // 信用卡
-      // VACC: 1,  // ATM 虛擬帳號（要就打開）
-      // CVS: 1,   // 超商代碼
-    };
+    const NotifyURL = ReturnURL;                                 // 同一路徑即可
+    const ClientBackURL = `${clientBase}/orders/${order.orderNo}`;
 
     const trade = {
       MerchantID,
@@ -97,17 +69,18 @@ export async function POST(req) {
       ReturnURL,
       NotifyURL,
       ClientBackURL,
-      ...paymentOpts,
+      CREDIT: 1,           // 啟用信用卡
+      // VACC: 1,          // 要測 ATM 再打開
+      // CVS: 1,           // 要測超商代碼再打開
     };
 
-    const tradeInfoPlain = toQuery(trade);
-    const TradeInfo = aesEncrypt(tradeInfoPlain, HashKey, HashIV);
+    const plain = toQuery(trade);
+    const TradeInfo = aesEncrypt(plain, HashKey, HashIV);
     const TradeSha = sha256(`HashKey=${HashKey}&${TradeInfo}&HashIV=${HashIV}`);
 
-    // 方便你在 Terminal 看到實際送去哪
     console.log("[NEWEBPAY CREATE]", { ReturnURL, ClientBackURL, MerchantOrderNo, Amt });
 
-    // 自動送出的 HTML 表單
+    // 自動送出表單
     const html = `<!doctype html>
 <html><head><meta charset="utf-8"><title>Redirecting…</title></head>
 <body onload="document.forms[0].submit()">

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import crypto from "crypto";
-import prisma from "../../../../../lib/prisma";
-
+import prisma from "../../../../lib/prisma";
 export const runtime = "nodejs";
 
 const aesDecrypt = (hex, key, iv) => {
@@ -20,14 +19,12 @@ export async function POST(req) {
     const HashKey = process.env.NEWEBPAY_HASH_KEY || "";
     const HashIV = process.env.NEWEBPAY_HASH_IV || "";
 
-    // 驗章
     const localSha = sha256(`HashKey=${HashKey}&${TradeInfo}&HashIV=${HashIV}`);
     if (localSha !== TradeSha) {
       console.warn("[NEWEBPAY NOTIFY] invalid sha");
       return NextResponse.json({ Status: "FAILED" }, { status: 400 });
     }
 
-    // 解密資料
     const plain = aesDecrypt(TradeInfo, HashKey, HashIV);
     let info;
     try { info = JSON.parse(plain); } catch { info = Object.fromEntries(new URLSearchParams(plain)); }
