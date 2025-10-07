@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 /**
  * 結帳頁（深藍底、美觀卡片版；使用 localStorage.cart 讀取購物車）
- * 你的 /api/orders 已經可用，保持原本導頁至 /orders/[orderNo]
+ * 只做最小修改：加入「配送方式」單選、依選項顯示 地址/門市，送出 payload 對齊 /api/orders
  */
 export default function CheckoutPage() {
   const router = useRouter();
@@ -24,11 +24,18 @@ export default function CheckoutPage() {
 
   // 金額
   const subTotal = useMemo(
-    () => items.reduce((s, it) => s + (Number(it.price ?? it.unitPrice) || 0) * (Number(it.qty) || 1), 0),
+    () =>
+      items.reduce(
+        (s, it) => s + (Number(it.price ?? it.unitPrice) || 0) * (Number(it.qty) || 1),
+        0
+      ),
     [items]
   );
-  const shipping = items.length ? 60 : 0;
-  const total = subTotal + shipping;
+
+  // 和 API 預設一致：宅配80、超商60、滿999免運
+  const HOME_FEE = 80;
+  const CVS_FEE = 60;
+  const FREE_SHIP_THRESHOLD = 999;
 
   // 表單
   const [form, setForm] = useState({
@@ -39,7 +46,10 @@ export default function CheckoutPage() {
     rName: "",
     rPhone: "",
     rEmail: "",
-    pickupStore: "",
+    // 🆕 配送方式與對應欄位
+    shipMethod: "", // "POST" | "CVS_NEWEBPAY"
+    address: "", // POST 用
+    pickupStore: "", // CVS_NEWEBPAY 用
     note: "",
   });
 
@@ -54,6 +64,15 @@ export default function CheckoutPage() {
     }
   }, [form.sameAsBuyer, form.name, form.phone, form.email]);
 
+  // 運費顯示（依選項）
+  const shipFee = useMemo(() => {
+    if (!items.length) return 0;
+    const fee = form.shipMethod === "CVS_NEWEBPAY" ? CVS_FEE : HOME_FEE;
+    return subTotal >= FREE_SHIP_THRESHOLD ? 0 : fee;
+  }, [items.length, subTotal, form.shipMethod]);
+
+  const total = subTotal + shipFee;
+
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
@@ -67,7 +86,17 @@ export default function CheckoutPage() {
     if (!items.length) return setErr("購物車是空的。");
     if (!form.name || !form.phone || !form.email) return setErr("請填購買人姓名 / 手機 / Email。");
     if (!form.rName || !form.rPhone) return setErr("請填收件人姓名 / 手機。");
-    if (!form.pickupStore) return setErr("請輸入取貨門市。");
+
+    // ✅ 必須讓客戶自己選配送方式
+    if (form.shipMethod !== "POST" && form.shipMethod !== "CVS_NEWEBPAY") {
+      return setErr("請選擇配送方式（郵局宅配或超商取貨）。");
+    }
+    if (form.shipMethod === "POST" && !form.address) {
+      return setErr("請填寫收件地址。");
+    }
+    if (form.shipMethod === "CVS_NEWEBPAY" && !form.pickupStore) {
+      return setErr("請輸入或選擇取貨門市。");
+    }
 
     try {
       setLoading(true);
@@ -85,21 +114,18 @@ export default function CheckoutPage() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          items: payloadItems,
           customer: {
-            name: form.name,
-            phone: form.phone,
-            email: form.email,
-            note: form.note || null,
-            pickupStore: form.pickupStore,
-            shipMethod: "CVS_7ELEVEN",
-            payMethod: "BANK_TRANSFER",
-          },
-          receiver: {
             name: form.rName,
             phone: form.rPhone,
             email: form.rEmail || null,
+            note: form.note || null,
+            // 依配送方式擇一帶入
+            address: form.shipMethod === "POST" ? form.address : undefined,
+            pickupStore: form.shipMethod === "CVS_NEWEBPAY" ? form.pickupStore : undefined,
           },
-          items: payloadItems,
+          // ！！！！必填：method（和後端一致）
+          shipping: { method: form.shipMethod },
         }),
       });
 
@@ -181,15 +207,58 @@ export default function CheckoutPage() {
             </div>
           </Section>
 
+          {/* 🆕 配送方式（只新增，不動你的原樣式） */}
+          <Section title="配送方式">
+            <div className="check">
+              <label className="check">
+                <input
+                  type="radio"
+                  name="shipMethod"
+                  value="POST"
+                  checked={form.shipMethod === "POST"}
+                  onChange={(e) => setForm((f) => ({ ...f, shipMethod: e.target.value }))}
+                />
+                郵局宅配
+              </label>
+              <span style={{ width: 12 }} />
+              <label className="check">
+                <input
+                  type="radio"
+                  name="shipMethod"
+                  value="CVS_NEWEBPAY"
+                  checked={form.shipMethod === "CVS_NEWEBPAY"}
+                  onChange={(e) => setForm((f) => ({ ...f, shipMethod: e.target.value }))}
+                />
+                超商取貨（藍新）
+              </label>
+            </div>
+          </Section>
+
+          {/* 你原本的區塊保留。內容依選項顯示對應欄位（地址／門市） */}
           <Section title="取貨門市">
-            <input
-              name="pickupStore"
-              value={form.pickupStore}
-              onChange={onChange}
-              placeholder="例：7-ELEVEN 松福門市（935392）"
-              className="input"
-            />
-            <p className="hint">請手動輸入門市名稱。</p>
+            {form.shipMethod === "POST" ? (
+              <>
+                <input
+                  name="address"
+                  value={form.address}
+                  onChange={onChange}
+                  placeholder="請填寫完整地址"
+                  className="input"
+                />
+                <p className="hint">宅配請填寫收件地址。</p>
+              </>
+            ) : (
+              <>
+                <input
+                  name="pickupStore"
+                  value={form.pickupStore}
+                  onChange={onChange}
+                  placeholder="例：7-ELEVEN 松福門市（935392）"
+                  className="input"
+                />
+                <p className="hint">請手動輸入門市名稱（之後可串藍新地圖）。</p>
+              </>
+            )}
           </Section>
 
           <Section title="付款方式">
@@ -230,8 +299,8 @@ export default function CheckoutPage() {
             <span>NT$ {subTotal}</span>
           </div>
           <div className="row sub">
-            <span>運費（超商）</span>
-            <span>NT$ {shipping}</span>
+            <span>運費（{form.shipMethod === "CVS_NEWEBPAY" ? "超商" : "宅配"}）</span>
+            <span>NT$ {shipFee}</span>
           </div>
           <div className="row total">
             <span>總計</span>
@@ -240,7 +309,7 @@ export default function CheckoutPage() {
         </aside>
       </div>
 
-      {/* 版面與配色樣式 */}
+      {/* 版面與配色樣式（完全保留原樣） */}
       <style jsx>{`
         .page {
           min-height: 100vh;
@@ -419,7 +488,7 @@ export default function CheckoutPage() {
   );
 }
 
-/* 小元件：段落 + 標籤/欄位 */
+/* 小元件：段落 + 標籤/欄位（保持不變） */
 function Section({ title, children }) {
   return (
     <div className="section">
