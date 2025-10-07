@@ -1,35 +1,31 @@
-generator client {
-  provider = "prisma-client-js"
-}
+generator client { provider = "prisma-client-js" }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model Order {
-  id              String     @id @default(cuid())
-  orderNo         String     @unique
-
-  customerName    String?
-  customerPhone   String?
-  customerEmail   String?
-  note            String?
-  pickupStore     String?
-
-  subTotal        Int
-  shipping        Int
-  total           Int
-
-  // ✅ 新增（只留一份，勿重複）
-  status          String     @default("PENDING") // PENDING/PAID/FAILED/REFUND
-  shipMethod      String     @default("POST")    // POST(郵局宅配) / CVS_NEWEBPAY(藍新超商)
-  customerAddress String?                        // 宅配地址（POST 時用）
-
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt          // ✅ 新增
-
-  items           OrderItem[]
+  id             String     @id @default(cuid())
+  orderNo        String     @unique
+  customerName   String?
+  customerPhone  String?
+  customerEmail  String?
+  customerAddress String?
+  note           String?
+  pickupStore    String?
+  subTotal       Int
+  shipping       Int
+  total          Int
+  shipMethod     String?    // POST | CVS_NEWEBPAY 等
+  status         String     @default("PENDING")
+  payProvider    String?
+  payTradeNo     String?
+  paidAt         DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  items          OrderItem[]
 }
 
 model OrderItem {
@@ -43,6 +39,4 @@ model OrderItem {
   image     String?
 
   @@index([orderId])
-
 }
-
