@@ -1,12 +1,31 @@
+// app/api/pay/newebpay/result/route.js
 import crypto from "crypto";
 
 export const runtime = "nodejs";
+
+// 產生一個只負責導頁的 HTML
+function redirectHTML(path) {
+  const safe = path || "/";
+  return new Response(
+    `<!doctype html><meta charset="utf-8"><title>Redirecting…</title>
+<script>location.replace(${JSON.stringify(safe)});</script>
+<noscript><meta http-equiv="refresh" content="0;url=${safe}"><a href="${safe}">Continue</a></noscript>`,
+    { status: 200, headers: { "content-type": "text/html; charset=utf-8" } }
+  );
+}
 
 const sha256 = (s) => crypto.createHash("sha256").update(s).digest("hex").toUpperCase();
 const aesDecrypt = (hex, key, iv) => {
   const decipher = crypto.createDecipheriv("aes-256-cbc", Buffer.from(key, "utf8"), Buffer.from(iv, "utf8"));
   return decipher.update(hex, "hex", "utf8") + decipher.final("utf8");
 };
+
+// 以防萬一：如果藍新用 GET 打（少見），也能導回（支援 ?orderNo=）
+export async function GET(req) {
+  const url = new URL(req.url);
+  const orderNo = url.searchParams.get("orderNo");
+  return redirectHTML(orderNo ? `/orders/${orderNo}` : "/");
+}
 
 export async function POST(req) {
   try {
@@ -17,7 +36,7 @@ export async function POST(req) {
     const key = process.env.NEWEBPAY_HASH_KEY || "";
     const iv  = process.env.NEWEBPAY_HASH_IV  || "";
 
-    // 驗章（失敗就回首頁）
+    // 驗章
     const ok = sha256(`HashKey=${key}&${TradeInfo}&HashIV=${iv}`) === TradeSha;
 
     let orderNo = "";
@@ -28,18 +47,8 @@ export async function POST(req) {
       orderNo = String(r.MerchantOrderNo || r.MerchantIDOrderNo || "");
     }
 
-    const target = orderNo ? `/orders/${orderNo}` : "/?pay=invalid";
-
-    const html = `<!doctype html><meta charset="utf-8"><title>Redirecting…</title>
-<script>location.replace(${JSON.stringify(target)});</script>
-<noscript><meta http-equiv="refresh" content="0;url=${target}"><a href="${target}">Continue</a></noscript>`;
-    return new Response(html, {
-      status: 200,
-      headers: { "content-type": "text/html; charset=utf-8" },
-    });
-  } catch (e) {
-    const html = `<!doctype html><meta charset="utf-8"><title>Error</title>
-<p>回傳解析失敗，<a href="/">回首頁</a></p>`;
-    return new Response(html, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
+    return redirectHTML(orderNo ? `/orders/${orderNo}` : "/?pay=invalid");
+  } catch {
+    return redirectHTML("/?pay=error");
   }
 }
