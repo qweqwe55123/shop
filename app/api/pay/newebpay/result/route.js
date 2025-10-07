@@ -1,5 +1,3 @@
-// app/api/pay/newebpay/result/route.js
-import { NextResponse } from "next/server";
 import crypto from "crypto";
 
 export const runtime = "nodejs";
@@ -13,32 +11,35 @@ const aesDecrypt = (hex, key, iv) => {
 export async function POST(req) {
   try {
     const form = await req.formData();
-    const TradeInfo = (form.get("TradeInfo") || "").toString();
-    const TradeSha  = (form.get("TradeSha")  || "").toString();
+    const TradeInfo = String(form.get("TradeInfo") || "");
+    const TradeSha  = String(form.get("TradeSha")  || "");
 
-    const HashKey = process.env.NEWEBPAY_HASH_KEY || "";
-    const HashIV  = process.env.NEWEBPAY_HASH_IV  || "";
+    const key = process.env.NEWEBPAY_HASH_KEY || "";
+    const iv  = process.env.NEWEBPAY_HASH_IV  || "";
 
-    // 驗章
-    const localSha = sha256(`HashKey=${HashKey}&${TradeInfo}&HashIV=${HashIV}`);
-    if (localSha !== TradeSha) {
-      return NextResponse.redirect(new URL("/?pay=invalid", req.url), { status: 303 });
+    // 驗章（失敗就回首頁）
+    const ok = sha256(`HashKey=${key}&${TradeInfo}&HashIV=${iv}`) === TradeSha;
+
+    let orderNo = "";
+    if (ok) {
+      const plain = aesDecrypt(TradeInfo, key, iv);
+      let data; try { data = JSON.parse(plain); } catch { data = Object.fromEntries(new URLSearchParams(plain)); }
+      const r = data.Result || data;
+      orderNo = String(r.MerchantOrderNo || r.MerchantIDOrderNo || "");
     }
 
-    // 解密取訂單編號
-    const plain = aesDecrypt(TradeInfo, HashKey, HashIV);
-    let data; try { data = JSON.parse(plain); } catch { data = Object.fromEntries(new URLSearchParams(plain)); }
-    const result  = data.Result || data;
-    const orderNo = (result.MerchantOrderNo || result.MerchantIDOrderNo || "").toString();
+    const target = orderNo ? `/orders/${orderNo}` : "/?pay=invalid";
 
-    if (!orderNo) {
-      return NextResponse.redirect(new URL("/?pay=missing", req.url), { status: 303 });
-    }
-
-    // 以 303 導回訂單頁（用 GET）
-    return NextResponse.redirect(new URL(`/orders/${orderNo}`, req.url), { status: 303 });
+    const html = `<!doctype html><meta charset="utf-8"><title>Redirecting…</title>
+<script>location.replace(${JSON.stringify(target)});</script>
+<noscript><meta http-equiv="refresh" content="0;url=${target}"><a href="${target}">Continue</a></noscript>`;
+    return new Response(html, {
+      status: 200,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
   } catch (e) {
-    console.error("newebpay/result error:", e);
-    return NextResponse.redirect(new URL("/?pay=error", req.url), { status: 303 });
+    const html = `<!doctype html><meta charset="utf-8"><title>Error</title>
+<p>回傳解析失敗，<a href="/">回首頁</a></p>`;
+    return new Response(html, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
   }
 }
