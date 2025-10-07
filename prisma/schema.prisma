@@ -1,37 +1,45 @@
-generator client { provider = "prisma-client-js" }
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
 
 datasource db {
-  provider  = "postgresql"
+  provider  = "postgresql"      // ← 改用 Postgres
   url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  directUrl = env("DIRECT_URL") // ← 給 migrate/db push 用
 }
 
 model Order {
-  id             String     @id @default(cuid())
-  orderNo        String     @unique
-  customerName   String?
-  customerPhone  String?
-  customerEmail  String?
+  id              String     @id @default(cuid())
+  orderNo         String     @unique
+  customerName    String?
+  customerPhone   String?
+  customerEmail   String?
   customerAddress String?
-  note           String?
-  pickupStore    String?
-  subTotal       Int
-  shipping       Int
-  total          Int
-  shipMethod     String?    // POST | CVS_NEWEBPAY 等
-  status         String     @default("PENDING")
-  payProvider    String?
-  payTradeNo     String?
-  paidAt         DateTime?
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
-  items          OrderItem[]
+  note            String?
+  pickupStore     String?
+
+  subTotal  Int
+  shipping  Int
+  total     Int
+
+  shipMethod  String?               // "POST" | "CVS_NEWEBPAY"…
+  status      String   @default("PENDING")
+  payProvider String?
+  payTradeNo  String?
+  paidAt      DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  items     OrderItem[]
 }
 
 model OrderItem {
   id        String  @id @default(cuid())
   order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   orderId   String
+
   productId String
   name      String
   price     Int
