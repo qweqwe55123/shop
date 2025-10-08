@@ -1,4 +1,4 @@
-// app/api/cvs/start/route.js
+// app/api/cvs/preview/route.js
 import crypto from "crypto";
 
 export const runtime = "nodejs";
@@ -15,6 +15,7 @@ const esc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt
 
 export async function GET(req) {
   const url = new URL(req.url);
+
   const UID =
     process.env.NEWEBPAY_LOGISTICS_UID ||
     process.env.NEWEBPAY_MERCHANT_ID ||
@@ -28,14 +29,6 @@ export async function GET(req) {
     process.env.NEWEBPAY_HASH_IV ||
     "";
 
-  const MAP_URL =
-    process.env.NEWEBPAY_LOGISTICS_MAP_URL ||
-    "https://ccore.newebpay.com/API/Logistic/storeMap";
-
-  if (!UID || !HASH_KEY || !HASH_IV) {
-    return new Response("<h1>缺少環境變數</h1>", { status: 500, headers: { "content-type": "text/html; charset=utf-8" } });
-  }
-
   const clientBase = process.env.CLIENT_BASE_URL || url.origin;
 
   const encObj = {
@@ -47,24 +40,38 @@ export async function GET(req) {
   };
   const encStr = new URLSearchParams(encObj).toString();
 
-  const EncryptData = aesEncrypt(encStr, HASH_KEY, HASH_IV);
-  const HashData = sha256Upper(`HashKey=${HASH_KEY}&EncryptData=${EncryptData}&HashIV=${HASH_IV}`);
+  const EncryptData = UID && HASH_KEY && HASH_IV ? aesEncrypt(encStr, HASH_KEY, HASH_IV) : "";
+  const HashData = EncryptData
+    ? sha256Upper(`HashKey=${HASH_KEY}&EncryptData=${EncryptData}&HashIV=${HASH_IV}`)
+    : "";
 
   const fields = {
     UID,
-    Version: "1.0.0",
+    Version: "1.0.0", // 依你提供的 NDNS v1.0.0 手冊
     RespondType: "JSON",
     EncryptData,
     HashData,
   };
-  const inputs = Object.entries(fields)
+
+  const rows = Object.entries(fields)
+    .map(([k, v]) => `<tr><td style="padding:6px;border:1px solid #ddd">${esc(k)}</td>
+                          <td style="padding:6px;border:1px solid #ddd;word-break:break-all">${esc(v)}</td></tr>`)
+    .join("");
+
+  const hidden = Object.entries(fields)
     .map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`)
     .join("");
 
+  const MAP_URL = process.env.NEWEBPAY_LOGISTICS_MAP_URL || "https://ccore.newebpay.com/API/Logistic/storeMap";
+  const sha = (process.env.VERCEL_GIT_COMMIT_SHA || "").slice(0, 7);
+
   const html = `<!doctype html><meta charset="utf-8">
-    <form id="f" method="post" accept-charset="UTF-8" action="${esc(MAP_URL)}">
-      ${inputs}
-    </form>
-    <script>document.getElementById('f').submit();</script>`;
+  <h3>NewebPay storeMap - Preview (build ${esc(sha)})</h3>
+  <p>下面是<span style="font-weight:700">即將送出</span>給藍新的 5 個欄位，請確認都有值；若 OK，再按下方按鈕送出。</p>
+  <table style="border-collapse:collapse">${rows}</table>
+  <form method="post" action="${esc(MAP_URL)}" accept-charset="UTF-8" style="margin-top:12px">
+    ${hidden}
+    <button type="submit">POST 到藍新 (storeMap)</button>
+  </form>`;
   return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
 }
