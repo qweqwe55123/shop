@@ -11,7 +11,7 @@ function aesEncryptBase64(plain, key, iv) {
     Buffer.from(iv, "utf8")
   );
   const enc = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
-  return enc.toString("base64"); // ★ base64
+  return enc.toString("base64");
 }
 function sha256Upper(s) {
   return crypto.createHash("sha256").update(s).digest("hex").toUpperCase();
@@ -47,16 +47,18 @@ export async function GET(req) {
   };
   const encStr = new URLSearchParams(encObj).toString();
 
-  const EncryptData = aesEncryptBase64(encStr, HASH_KEY, HASH_IV);
-  const HashData = sha256Upper(`HashKey=${HASH_KEY}&EncryptData=${EncryptData}&HashIV=${HASH_IV}`);
+  const EncryptData_ = aesEncryptBase64(encStr, HASH_KEY, HASH_IV);
+  const HashData_ = sha256Upper(`HashKey=${HASH_KEY}&EncryptData=${EncryptData_}&HashIV=${HASH_IV}`);
 
+  // ★ 帶底線命名
   const fields = {
-    UID,
-    Version: "1.0",        // ★ 用 1.0
-    RespondType: "JSON",
-    EncryptData,
-    HashData,
+    UID_: UID,
+    Version_: "1.0",
+    RespondType_: "JSON",
+    EncryptData_: EncryptData_,
+    HashData_: HashData_,
   };
+
   const inputs = Object.entries(fields)
     .map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`)
     .join("");

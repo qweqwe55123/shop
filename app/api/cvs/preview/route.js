@@ -11,7 +11,7 @@ function aesEncryptBase64(plain, key, iv) {
     Buffer.from(iv, "utf8")
   );
   const enc = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
-  return enc.toString("base64"); // ★ 改成 base64
+  return enc.toString("base64"); // base64
 }
 function sha256Upper(s) {
   return crypto.createHash("sha256").update(s).digest("hex").toUpperCase();
@@ -22,32 +22,35 @@ const esc = (s) =>
 export async function GET(req) {
   const url = new URL(req.url);
 
+  // 優先用物流專用憑證，沒有才退回金流那組
   const UID = process.env.NEWEBPAY_LOGISTICS_UID || process.env.NEWEBPAY_MERCHANT_ID || "";
   const HASH_KEY = process.env.NEWEBPAY_LOGISTICS_HASH_KEY || process.env.NEWEBPAY_HASH_KEY || "";
   const HASH_IV = process.env.NEWEBPAY_LOGISTICS_HASH_IV || process.env.NEWEBPAY_HASH_IV || "";
 
   const clientBase = process.env.CLIENT_BASE_URL || url.origin;
 
+  // EncryptData 內容（依手冊）
   const encObj = {
     MerchantOrderNo: `MAP_${Date.now().toString(36)}`.slice(0, 30),
     LgsType: url.searchParams.get("lgs") || "C2C",
-    ShipType: url.searchParams.get("ship") || "1", // 1=7-ELEVEN
+    ShipType: url.searchParams.get("ship") || "1", // 1=7-11
     ReturnURL: `${clientBase}/api/cvs/callback`,
     TimeStamp: Math.floor(Date.now() / 1000).toString(),
   };
   const encStr = new URLSearchParams(encObj).toString();
 
-  const EncryptData = UID && HASH_KEY && HASH_IV ? aesEncryptBase64(encStr, HASH_KEY, HASH_IV) : "";
-  const HashData = EncryptData
-    ? sha256Upper(`HashKey=${HASH_KEY}&EncryptData=${EncryptData}&HashIV=${HASH_IV}`)
+  const EncryptData_ = UID && HASH_KEY && HASH_IV ? aesEncryptBase64(encStr, HASH_KEY, HASH_IV) : "";
+  const HashData_ = EncryptData_
+    ? sha256Upper(`HashKey=${HASH_KEY}&EncryptData=${EncryptData_}&HashIV=${HASH_IV}`)
     : "";
 
+  // ★ 欄位名要有底線（依手冊）
   const fields = {
-    UID,
-    Version: "1.0",         // ★ 改成 1.0
-    RespondType: "JSON",
-    EncryptData,
-    HashData,
+    UID_: UID,
+    Version_: "1.0",
+    RespondType_: "JSON",
+    EncryptData_: EncryptData_,
+    HashData_: HashData_,
   };
 
   const rows = Object.entries(fields)
@@ -69,7 +72,7 @@ export async function GET(req) {
 
   const html = `<!doctype html><meta charset="utf-8">
   <h3>NewebPay storeMap - Preview (build ${esc(sha)})</h3>
-  <p>確認下列 5 個欄位<span style="font-weight:700">都有值</span>（EncryptData 會是 Base64、通常會有「/」「+」「=」）。OK 後再按下方送出。</p>
+  <p>確認下列 5 個欄位<span style="font-weight:700">都有值</span>（EncryptData_ 為 Base64 會帶 <code>/ + =</code>）。OK 後再按下方送出。</p>
   <table style="border-collapse:collapse">${rows}</table>
   <form method="post" action="${esc(MAP_URL)}" accept-charset="UTF-8" style="margin-top:12px">
     ${hidden}
