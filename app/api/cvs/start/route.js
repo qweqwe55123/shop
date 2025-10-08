@@ -52,7 +52,7 @@ export async function GET(req) {
 
   const fields = {
     UID,
-    Version: "1.0.0",
+    Version: "1.0",
     RespondType: "JSON",
     EncryptData,
     HashData,

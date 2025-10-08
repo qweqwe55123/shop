@@ -47,7 +47,7 @@ export async function GET(req) {
 
   const fields = {
     UID,
-    Version: "1.0.0", // 依你提供的 NDNS v1.0.0 手冊
+    Version: "1.0", // 依你提供的 NDNS v1.0.0 手冊
     RespondType: "JSON",
     EncryptData,
     HashData,
