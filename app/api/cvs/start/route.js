@@ -4,36 +4,36 @@ import crypto from "crypto";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function aesEncrypt(plain, key, iv) {
-  const cipher = crypto.createCipheriv("aes-256-cbc", Buffer.from(key, "utf8"), Buffer.from(iv, "utf8"));
-  return cipher.update(plain, "utf8", "hex") + cipher.final("hex");
+function aesEncryptBase64(plain, key, iv) {
+  const cipher = crypto.createCipheriv(
+    "aes-256-cbc",
+    Buffer.from(key, "utf8"),
+    Buffer.from(iv, "utf8")
+  );
+  const enc = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
+  return enc.toString("base64"); // ★ base64
 }
 function sha256Upper(s) {
   return crypto.createHash("sha256").update(s).digest("hex").toUpperCase();
 }
-const esc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
+const esc = (s) =>
+  String(s).replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
 
 export async function GET(req) {
   const url = new URL(req.url);
-  const UID =
-    process.env.NEWEBPAY_LOGISTICS_UID ||
-    process.env.NEWEBPAY_MERCHANT_ID ||
-    "";
-  const HASH_KEY =
-    process.env.NEWEBPAY_LOGISTICS_HASH_KEY ||
-    process.env.NEWEBPAY_HASH_KEY ||
-    "";
-  const HASH_IV =
-    process.env.NEWEBPAY_LOGISTICS_HASH_IV ||
-    process.env.NEWEBPAY_HASH_IV ||
-    "";
+
+  const UID = process.env.NEWEBPAY_LOGISTICS_UID || process.env.NEWEBPAY_MERCHANT_ID || "";
+  const HASH_KEY = process.env.NEWEBPAY_LOGISTICS_HASH_KEY || process.env.NEWEBPAY_HASH_KEY || "";
+  const HASH_IV = process.env.NEWEBPAY_LOGISTICS_HASH_IV || process.env.NEWEBPAY_HASH_IV || "";
 
   const MAP_URL =
-    process.env.NEWEBPAY_LOGISTICS_MAP_URL ||
-    "https://ccore.newebpay.com/API/Logistic/storeMap";
+    process.env.NEWEBPAY_LOGISTICS_MAP_URL || "https://ccore.newebpay.com/API/Logistic/storeMap";
 
   if (!UID || !HASH_KEY || !HASH_IV) {
-    return new Response("<h1>缺少環境變數</h1>", { status: 500, headers: { "content-type": "text/html; charset=utf-8" } });
+    return new Response("<h1>缺少環境變數</h1>", {
+      status: 500,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
   }
 
   const clientBase = process.env.CLIENT_BASE_URL || url.origin;
@@ -47,12 +47,12 @@ export async function GET(req) {
   };
   const encStr = new URLSearchParams(encObj).toString();
 
-  const EncryptData = aesEncrypt(encStr, HASH_KEY, HASH_IV);
+  const EncryptData = aesEncryptBase64(encStr, HASH_KEY, HASH_IV);
   const HashData = sha256Upper(`HashKey=${HASH_KEY}&EncryptData=${EncryptData}&HashIV=${HASH_IV}`);
 
   const fields = {
     UID,
-    Version: "1.0",
+    Version: "1.0",        // ★ 用 1.0
     RespondType: "JSON",
     EncryptData,
     HashData,
