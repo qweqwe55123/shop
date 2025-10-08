@@ -4,10 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 /**
- * 結帳頁（白底版 + 7-11 門市地圖）
+ * 結帳頁（白底版）
  * - 配送：7-ELEVEN / 郵局
- * - 付款：7-11 → 信用卡 / ATM / 取貨付款(COD UI 先放)；郵局 → 信用卡 / ATM
- * - 選門市：彈出 /api/cvs/start → callback 回填欄位（postMessage + URL 備援）
+ * - 付款：7-ELEVEN → 信用卡 / ATM / 取貨付款(COD UI)；郵局 → 信用卡 / ATM
+ * - 門市地圖：/api/cvs/start (藍新 B51) → /api/cvs/callback 回填
+ * - 郵局：新增「收件地址」欄位，並在送單時帶到 customer.address
  */
 export default function CheckoutPage() {
   const router = useRouter();
@@ -41,12 +42,15 @@ export default function CheckoutPage() {
     name: "", phone: "", email: "",
     sameAsBuyer: true, rName: "", rPhone: "", rEmail: "",
     shipMethod: "CVS_7ELEVEN", // CVS_7ELEVEN | POST
-    payMethod: "CREDIT",       // CREDIT | ATM | COD(僅 7-11)
+    payMethod: "CREDIT",       // CREDIT | ATM | COD (僅 7-11)
+    // 超商門市欄位
     cvsStoreId: "", cvsStoreName: "", cvsAddress: "",
+    // 郵局宅配地址
+    postAddress: "",
     note: "",
   });
 
-  // 勾同購買人 → 自動帶入
+  // 勾選「同購買人」→ 自動帶入
   useEffect(() => {
     if (form.sameAsBuyer) {
       setForm((f) => ({ ...f, rName: f.name, rPhone: f.phone, rEmail: f.email }));
@@ -79,7 +83,8 @@ export default function CheckoutPage() {
       }
     };
     window.addEventListener("message", onMsg);
-    // 備援：讀 URL 參數
+
+    // 備援：讀 URL 參數（/checkout?sid=...&sn=...&sa=...）
     try {
       const p = new URLSearchParams(window.location.search);
       const sid = p.get("sid"), sn = p.get("sn"), sa = p.get("sa");
@@ -95,6 +100,7 @@ export default function CheckoutPage() {
         window.history.replaceState({}, "", u.toString());
       }
     } catch {}
+
     return () => window.removeEventListener("message", onMsg);
   }, []);
 
@@ -124,7 +130,7 @@ export default function CheckoutPage() {
         return setErr("請先選擇 7-ELEVEN 取貨門市。");
       }
     } else {
-      // 郵局：之後加地址驗證
+      if (!form.postAddress) return setErr("請填寫郵局宅配收件地址。");
     }
 
     try {
@@ -145,15 +151,20 @@ export default function CheckoutPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           items: payloadItems,
-          customer: { name: form.name, phone: form.phone, email: form.email, note: form.note || null },
+          customer: {
+            name: form.name,
+            phone: form.phone,
+            email: form.email,
+            note: form.note || null,
+            address: form.shipMethod === "POST" ? form.postAddress : null, // ★ 郵局帶地址
+          },
           receiver: { name: form.rName, phone: form.rPhone, email: form.rEmail || null },
           shipping: {
             method: shippingMethod,
-            store: shippingMethod === "CVS_NEWEBPAY" ? {
-              id: form.cvsStoreId,
-              name: form.cvsStoreName,
-              address: form.cvsAddress,
-            } : null,
+            store:
+              shippingMethod === "CVS_NEWEBPAY"
+                ? { id: form.cvsStoreId, name: form.cvsStoreName, address: form.cvsAddress }
+                : null,
           },
           payMethod: form.payMethod, // CREDIT | ATM | COD(7-11)
         }),
@@ -176,8 +187,15 @@ export default function CheckoutPage() {
 
   const payOptions =
     form.shipMethod === "CVS_7ELEVEN"
-      ? [{ value: "CREDIT", label: "信用卡" }, { value: "ATM", label: "ATM 轉帳" }, { value: "COD", label: "取貨付款（7-11）" }]
-      : [{ value: "CREDIT", label: "信用卡" }, { value: "ATM", label: "ATM 轉帳" }];
+      ? [
+          { value: "CREDIT", label: "信用卡" },
+          { value: "ATM", label: "ATM 轉帳" },
+          { value: "COD", label: "取貨付款（7-ELEVEN）" },
+        ]
+      : [
+          { value: "CREDIT", label: "信用卡" },
+          { value: "ATM", label: "ATM 轉帳" },
+        ];
 
   return (
     <div className="page">
@@ -200,22 +218,40 @@ export default function CheckoutPage() {
 
           <Section title="收件人資訊">
             <label className="check">
-              <input type="checkbox" checked={form.sameAsBuyer}
-                onChange={(e) => setForm((f) => ({ ...f, sameAsBuyer: e.target.checked }))}/>
+              <input
+                type="checkbox"
+                checked={form.sameAsBuyer}
+                onChange={(e) => setForm((f) => ({ ...f, sameAsBuyer: e.target.checked }))}
+              />
               同購買人
             </label>
             <div className="grid2">
               <Field label="姓名" req>
-                <input name="rName" value={form.rName} onChange={onChange}
-                  disabled={form.sameAsBuyer} className="input" />
+                <input
+                  name="rName"
+                  value={form.rName}
+                  onChange={onChange}
+                  disabled={form.sameAsBuyer}
+                  className="input"
+                />
               </Field>
               <Field label="手機" req>
-                <input name="rPhone" value={form.rPhone} onChange={onChange}
-                  disabled={form.sameAsBuyer} className="input" />
+                <input
+                  name="rPhone"
+                  value={form.rPhone}
+                  onChange={onChange}
+                  disabled={form.sameAsBuyer}
+                  className="input"
+                />
               </Field>
               <Field label="電子郵件（選填）" full>
-                <input name="rEmail" value={form.rEmail} onChange={onChange}
-                  disabled={form.sameAsBuyer} className="input" />
+                <input
+                  name="rEmail"
+                  value={form.rEmail}
+                  onChange={onChange}
+                  disabled={form.sameAsBuyer}
+                  className="input"
+                />
               </Field>
             </div>
           </Section>
@@ -223,13 +259,23 @@ export default function CheckoutPage() {
           <Section title="配送方式">
             <div className="rowh">
               <label className="radio">
-                <input type="radio" name="shipMethod" value="CVS_7ELEVEN"
-                  checked={form.shipMethod === "CVS_7ELEVEN"} onChange={onChange} />
+                <input
+                  type="radio"
+                  name="shipMethod"
+                  value="CVS_7ELEVEN"
+                  checked={form.shipMethod === "CVS_7ELEVEN"}
+                  onChange={onChange}
+                />
                 7-ELEVEN 超商取貨
               </label>
               <label className="radio">
-                <input type="radio" name="shipMethod" value="POST"
-                  checked={form.shipMethod === "POST"} onChange={onChange} />
+                <input
+                  type="radio"
+                  name="shipMethod"
+                  value="POST"
+                  checked={form.shipMethod === "POST"}
+                  onChange={onChange}
+                />
                 郵局宅配
               </label>
             </div>
@@ -239,13 +285,31 @@ export default function CheckoutPage() {
             <Section title="取貨門市">
               <div className="grid2">
                 <Field label="門市代號" req>
-                  <input name="cvsStoreId" value={form.cvsStoreId} onChange={onChange} className="input" />
+                  <input
+                    name="cvsStoreId"
+                    value={form.cvsStoreId}
+                    onChange={onChange}
+                    className="input"
+                    placeholder="例如：935392"
+                  />
                 </Field>
                 <Field label="門市名稱" req>
-                  <input name="cvsStoreName" value={form.cvsStoreName} onChange={onChange} className="input" />
+                  <input
+                    name="cvsStoreName"
+                    value={form.cvsStoreName}
+                    onChange={onChange}
+                    className="input"
+                    placeholder="例如：松福門市"
+                  />
                 </Field>
                 <Field label="門市地址" full>
-                  <input name="cvsAddress" value={form.cvsAddress} onChange={onChange} className="input" />
+                  <input
+                    name="cvsAddress"
+                    value={form.cvsAddress}
+                    onChange={onChange}
+                    className="input"
+                    placeholder="門市完整地址"
+                  />
                 </Field>
               </div>
               <div style={{ marginTop: 8 }}>
@@ -256,6 +320,19 @@ export default function CheckoutPage() {
                   選完會自動回填門市欄位。
                 </span>
               </div>
+            </Section>
+          )}
+
+          {form.shipMethod === "POST" && (
+            <Section title="收件地址（郵局宅配）">
+              <input
+                name="postAddress"
+                value={form.postAddress}
+                onChange={onChange}
+                className="input"
+                placeholder="請輸入完整收件地址（道路、門牌、樓層…）"
+              />
+              <p className="hint">未填寫地址將無法送單。</p>
             </Section>
           )}
 
@@ -276,7 +353,7 @@ export default function CheckoutPage() {
               ))}
             </div>
             {form.payMethod === "COD" && form.shipMethod === "CVS_7ELEVEN" && (
-              <p className="hint">取貨付款屬物流代收（第二階段接物流 API）。</p>
+              <p className="hint">取貨付款為物流代收，第二階段會串接藍新物流下單與代收款結帳。</p>
             )}
           </Section>
 
@@ -347,11 +424,11 @@ export default function CheckoutPage() {
           }
         }
         .card {
-          background: #ffffff;               /* 卡片白 */
-          border: 1px solid #e5e7eb;         /* 邊框灰 */
+          background: #ffffff;
+          border: 1px solid #e5e7eb;
           border-radius: 16px;
           padding: 20px 18px;
-          box-shadow: 0 6px 20px rgba(17, 24, 39, 0.06); /* 淺陰影 */
+          box-shadow: 0 6px 20px rgba(17, 24, 39, 0.06);
         }
         .stitle, .title {
           font-weight: 800;
@@ -422,7 +499,7 @@ export default function CheckoutPage() {
           padding: 12px 18px;
           font-weight: 900;
           color: #fff;
-          background: linear-gradient(90deg, #3b82f6, #60a5fa); /* 藍系 CTA 在白底更清楚 */
+          background: linear-gradient(90deg, #3b82f6, #60a5fa);
           box-shadow: 0 10px 18px rgba(59, 130, 246, 0.25);
           cursor: pointer;
         }

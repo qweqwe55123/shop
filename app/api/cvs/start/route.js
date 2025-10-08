@@ -4,58 +4,55 @@ import crypto from "crypto";
 export const runtime = "nodejs";
 
 /**
- * 產生門市地圖表單（自動 POST 到藍新 storeMap）
- * 可用 query 覆寫：
- *   lgs=C2C|B2C  預設 C2C
- *   ship=1|2|3|4  1=7-11, 2=全家, 3=萊爾富, 4=OK  預設 1(7-11)
+ * 開藍新物流門市地圖 (B51 storeMap)
+ * 可用 query：lgs=C2C|B2C（預設C2C）、ship=1|2|3|4（1=7-11）
  */
 export async function GET(req) {
   const url = new URL(req.url);
 
-  // Logistics（若未提供則退回你金流同組 Key/IV）
+  // 物流UID/金鑰（沒有物流專用就沿用金流）
   const UID = process.env.NEWEBPAY_LOGISTICS_UID || process.env.NEWEBPAY_MERCHANT_ID || "";
   const HASH_KEY = process.env.NEWEBPAY_LOGISTICS_HASH_KEY || process.env.NEWEBPAY_HASH_KEY || "";
   const HASH_IV  = process.env.NEWEBPAY_LOGISTICS_HASH_IV  || process.env.NEWEBPAY_HASH_IV  || "";
   const MAP_URL  = process.env.NEWEBPAY_LOGISTICS_MAP_URL
-    || "https://ccore.newebpay.com/API/Logistic/storeMap"; // 沙箱預設
+    || "https://ccore.newebpay.com/API/Logistic/storeMap"; // 沙箱端點
 
   if (!UID || !HASH_KEY || !HASH_IV) {
     return new Response("Logistics UID/HashKey/HashIV 未設定", { status: 500 });
   }
 
   // 業務參數
-  const lgsType  = url.searchParams.get("lgs")  || "C2C"; // C2C 店到店 / B2C
-  const shipType = url.searchParams.get("ship") || "1";   // 1=7-11
+  const lgsType  = url.searchParams.get("lgs")  || "C2C";
+  const shipType = url.searchParams.get("ship") || "1"; // 1=7-11
   const clientBase = process.env.CLIENT_BASE_URL || new URL(req.url).origin;
-
   const returnURL = `${clientBase}/api/cvs/callback`;
+
   const merchantOrderNo = `MAP_${Date.now().toString(36)}`.slice(0, 30);
 
-  // EncryptData_ 內容（以 querystring 字串加密）
+  // EncryptData 內容 (querystring 字串)
   const encObj = {
     MerchantOrderNo: merchantOrderNo,
-    LgsType: lgsType,        // C2C / B2C
-    ShipType: shipType,      // 1=7-11, 2=全家, 3=萊爾富, 4=OK
-    ReturnURL: returnURL,    // 地圖選完回呼
+    LgsType: lgsType,
+    ShipType: shipType,
+    ReturnURL: returnURL,
     TimeStamp: Math.floor(Date.now() / 1000).toString(),
   };
   const encStr = new URLSearchParams(encObj).toString();
 
-  // AES-256-CBC 加密 (EncryptData_)
-  const encryptData = aesEncrypt(encStr, HASH_KEY, HASH_IV);
+  // AES-256-CBC (hex)
+  const EncryptData = aesEncrypt(encStr, HASH_KEY, HASH_IV);
+  // HashData = SHA256( "HashKey=...&EncryptData=...&HashIV=..." ).toUpperCase()
+  const HashData = sha256Upper(`HashKey=${HASH_KEY}&${EncryptData}&HashIV=${HASH_IV}`);
 
-  // HashData_（HashKey + EncryptData_ + HashIV → SHA256 大寫）
-  const hashData = sha256Upper(`HashKey=${HASH_KEY}&${encryptData}&HashIV=${HASH_IV}`);
-
+  // ⚠️ 關鍵：欄位名稱不要底線
   const postFields = {
-    UID_: UID,
-    Version_: "1.0",
-    RespondType_: "JSON",
-    EncryptData_: encryptData,
-    HashData_: hashData,
+    UID: UID,
+    Version: "1.0",
+    RespondType: "JSON",
+    EncryptData,
+    HashData,
   };
 
-  // 產生自動送出的 HTML
   const inputs = Object.entries(postFields)
     .map(([k, v]) => `<input type="hidden" name="${escapeHtml(k)}" value="${escapeHtml(String(v))}">`)
     .join("");
