@@ -5,6 +5,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const pick = (k) => (process.env[k] == null ? "" : String(process.env[k]).trim());
+const esc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ "<":"&lt;", ">":"&gt;", "&":"&amp;" }[c]));
 
 function aesEncryptBase64(plain, key, iv) {
   const cipher = crypto.createCipheriv("aes-256-cbc", Buffer.from(key, "utf8"), Buffer.from(iv, "utf8"));
@@ -14,12 +15,11 @@ function aesEncryptBase64(plain, key, iv) {
 function sha256Upper(s) {
   return crypto.createHash("sha256").update(s).digest("hex").toUpperCase();
 }
-const esc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ "<":"&lt;", ">":"&gt;", "&":"&amp;" }[c]));
 
 export async function GET(req) {
   const url = new URL(req.url);
 
-  // 優先用物流憑證，其次用金流憑證
+  // 先用物流憑證；若無，再用金流憑證
   const LOG_UID = pick("NEWEBPAY_LOGISTICS_UID");
   const LOG_KEY = pick("NEWEBPAY_LOGISTICS_HASH_KEY");
   const LOG_IV  = pick("NEWEBPAY_LOGISTICS_HASH_IV");
@@ -37,6 +37,7 @@ export async function GET(req) {
 
   const clientBase = pick("CLIENT_BASE_URL") || url.origin;
 
+  // 藍新需要的 EncryptData（querystring 形式）
   const encObj = {
     MerchantOrderNo: `MAP_${Date.now().toString(36)}`.slice(0, 30),
     LgsType  : url.searchParams.get("lgs")  || "C2C",

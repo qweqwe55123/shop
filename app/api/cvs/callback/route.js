@@ -2,56 +2,81 @@
 import crypto from "crypto";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-const HASH_KEY = process.env.NEWEBPAY_LOGISTICS_HASH_KEY || process.env.NEWEBPAY_HASH_KEY || "";
-const HASH_IV  = process.env.NEWEBPAY_LOGISTICS_HASH_IV  || process.env.NEWEBPAY_HASH_IV  || "";
+const pick = (k) => (process.env[k] == null ? "" : String(process.env[k]).trim());
 
-const sha256Upper = (s) => crypto.createHash("sha256").update(s).digest("hex").toUpperCase();
-function aesDecrypt(hex, key, iv) {
-  const decipher = crypto.createDecipheriv("aes-256-cbc", Buffer.from(key, "utf8"), Buffer.from(iv, "utf8"));
-  return decipher.update(hex, "hex", "utf8") + decipher.final("utf8");
+function aesDecryptBase64ToUtf8(b64, key, iv) {
+  const decipher = crypto.createDecipheriv(
+    "aes-256-cbc",
+    Buffer.from(key, "utf8"),
+    Buffer.from(iv, "utf8")
+  );
+  const dec = Buffer.concat([
+    decipher.update(Buffer.from(b64, "base64")),
+    decipher.final(),
+  ]);
+  return dec.toString("utf8");
+}
+
+function sha256Upper(s) {
+  return crypto.createHash("sha256").update(s).digest("hex").toUpperCase();
 }
 
 export async function POST(req) {
-  const form = await req.formData();
+  const raw = await req.text(); // x-www-form-urlencoded
+  const p = new URLSearchParams(raw);
 
-  // 依手冊：Status / Message / EncryptData / HashData
-  const Status      = String(form.get("Status")      || "");
-  const EncryptData = String(form.get("EncryptData") || "");
-  const HashData    = String(form.get("HashData")    || "");
+  const UID_ = p.get("UID_") || "";
+  const EncryptData_ = p.get("EncryptData_") || "";
+  const HashData_ = p.get("HashData_") || "";
 
-  const ok = HashData && sha256Upper(`HashKey=${HASH_KEY}&${EncryptData}&HashIV=${HASH_IV}`) === HashData;
+  const KEY = pick("NEWEBPAY_LOGISTICS_HASH_KEY");
+  const IV = pick("NEWEBPAY_LOGISTICS_HASH_IV");
 
-  let store = { id: "", name: "", address: "" };
+  // 驗簽（建議保留）
+  const calc = sha256Upper(`HashKey=${KEY}&EncryptData=${EncryptData_}&HashIV=${IV}`);
+  const signOK = HashData_ && calc === HashData_;
+
+  let plain = "";
+  let data = {};
   try {
-    if (ok && Status === "SUCCESS" && EncryptData) {
-      const raw = aesDecrypt(EncryptData, HASH_KEY, HASH_IV);
-      const obj = Object.fromEntries(new URLSearchParams(raw));
-      // 常見欄位名（實際以你的手冊為準）
-      store.id      = obj.StoreID || obj.CVSStoreID || "";
-      store.name    = obj.StoreName || obj.CVSStoreName || "";
-      store.address = obj.StoreAddr || obj.StoreAddress || obj.CVSAddress || "";
-    }
-  } catch { /* ignore */ }
+    plain = aesDecryptBase64ToUtf8(EncryptData_, KEY, IV); // 內容是 querystring
+    const q = new URLSearchParams(plain);
+    data = {
+      LgsType: q.get("LgsType") || "",
+      ShipType: q.get("ShipType") || "",
+      StoreID: q.get("StoreID") || "",
+      StoreName: q.get("StoreName") || "",
+      StoreAddress: q.get("StoreAddress") || "",
+      LogisticsSubType: q.get("LogisticsSubType") || "",
+    };
+  } catch (e) {
+    return new Response(
+      `<!doctype html><meta charset="utf-8">
+       <script>
+         window.opener && window.opener.postMessage(
+           { type: "CVS_SELECTED", ok:false, err:"DECRYPT_FAIL" },
+           "*"
+         );
+         window.close();
+       </script>`,
+      { headers: { "content-type": "text/html; charset=utf-8" } }
+    );
+  }
 
-  const target = process.env.CLIENT_BASE_URL || new URL(req.url).origin;
-  const redirectUrl = `${target}/checkout?sid=${encodeURIComponent(store.id)}&sn=${encodeURIComponent(store.name)}&sa=${encodeURIComponent(store.address)}`;
-
-  // 優先以 postMessage 帶回；沒有 opener 就導回 /checkout?sid=...
-  const html = `<!doctype html><meta charset="utf-8"><title>Selected</title>
-<script>
-  (function(){
-    var data = { type: "CVS_PICKED", data: ${JSON.stringify(store)} };
-    try {
-      if (window.opener && !window.opener.closed) {
-        window.opener.postMessage(data, ${JSON.stringify(target)});
-        window.close();
-      } else {
-        location.replace(${JSON.stringify(redirectUrl)});
-      }
-    } catch (e) { location.replace(${JSON.stringify(redirectUrl)}); }
-  })();
-</script>選擇完成，返回中…`;
-
-  return new Response(html, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
+  const payload = JSON.stringify({ ok: signOK, uid: UID_, data });
+  return new Response(
+    `<!doctype html><meta charset="utf-8">
+     <script>
+       try {
+         window.opener && window.opener.postMessage(
+           { type: "CVS_SELECTED", result: ${payload} },
+           "*"
+         );
+       } catch(e) {}
+       window.close();
+     </script>`,
+    { headers: { "content-type": "text/html; charset=utf-8" } }
+  );
 }
