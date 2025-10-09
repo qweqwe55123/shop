@@ -46,4 +46,3 @@ next-env.d.ts
 # 讓 app/lib 不被忽略
 !app/lib/
 !app/lib/prisma.js
-.vercel

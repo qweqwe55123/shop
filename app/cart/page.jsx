@@ -1,25 +1,37 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import React, { useEffect, useMemo, useState } from "react";
 
-/**
- * 白底購物車頁
- * - 讀寫 localStorage.cart = { items: [{id,name,price|unitPrice,qty,image}] }
- * - 可增減數量、移除、清空
- * - 頁面底部預留 120px，避免遮到你的活動諮詢/浮動元件
- */
+/* ===== 跟首頁一致的色系 ===== */
+const BG = "#0f172a";
+const PANEL = "#111827";
+const BORDER = "rgba(255,255,255,.08)";
+const TEXT_SUB = "#cbd5e1";
+
+/* ===== 共用 Panel ===== */
+function Panel({ children, style = {} }) {
+  return (
+    <section
+      style={{
+        maxWidth: 960,
+        margin: "24px auto",
+        background: PANEL,
+        borderRadius: 16,
+        padding: "20px 18px",
+        boxShadow: "0 0 40px rgba(0,0,0,.25)",
+        ...style,
+      }}
+    >
+      {children}
+    </section>
+  );
+}
 
 export default function CartPage() {
-  const router = useRouter();
   const [items, setItems] = useState([]);
 
+  // 初始載入購物車
   useEffect(() => {
-    load();
-  }, []);
-
-  const load = () => {
     try {
       const raw = localStorage.getItem("cart");
       const data = raw ? JSON.parse(raw) : { items: [] };
@@ -27,124 +39,306 @@ export default function CartPage() {
     } catch {
       setItems([]);
     }
-  };
+  }, []);
 
-  const save = (list) => {
-    localStorage.setItem("cart", JSON.stringify({ items: list }));
-    setItems(list);
-  };
-
+  // 金額
   const subTotal = useMemo(
-    () => items.reduce((s, it) => s + (Number(it.price ?? it.unitPrice) || 0) * (Number(it.qty) || 1), 0),
+    () => items.reduce((s, it) => s + (Number(it.total) || 0), 0),
     [items]
   );
-
-  const shipping = items.length ? 60 : 0; // 預設用超商 60，實際以結帳頁選擇為準
+  const shipping = items.length ? 60 : 0;
   const total = subTotal + shipping;
 
-  const inc = (idx) => {
-    const next = [...items];
-    next[idx].qty = Number(next[idx].qty || 1) + 1;
-    save(next);
-  };
-  const dec = (idx) => {
-    const next = [...items];
-    const q = Number(next[idx].qty || 1) - 1;
-    next[idx].qty = q <= 1 ? 1 : q;
-    save(next);
-  };
-  const removeAt = (idx) => {
+  // 操作
+  const remove = (idx) => {
     const next = items.filter((_, i) => i !== idx);
-    save(next);
+    setItems(next);
+    localStorage.setItem("cart", JSON.stringify({ items: next }));
   };
-  const clear = () => {
-    save([]);
+
+  const clearAll = () => {
+    setItems([]);
+    localStorage.setItem("cart", JSON.stringify({ items: [] }));
   };
 
   return (
-    <main style={{ background: "#fff", minHeight: "100vh", paddingBottom: 120 }}>
-      <div style={{ maxWidth: 1120, margin: "0 auto", padding: "30px 16px 60px" }}>
-        <h1 style={{ fontSize: 24, fontWeight: 900, marginBottom: 8 }}>購物車</h1>
-        <p style={{ color: "#475569", marginBottom: 18 }}>確認品項與數量，前往結帳。</p>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16 }}>
-          {/* 清單 */}
-          <div style={card}>
-            {items.length === 0 ? (
-              <div style={{ color: "#64748b" }}>
-                購物車是空的。<Link href="/" style={{ marginLeft: 8, color: "#2563eb", textDecoration: "underline" }}>去逛逛</Link>
-              </div>
-            ) : (
-              <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-                {items.map((it, idx) => {
-                  const unit = Number(it.price ?? it.unitPrice) || 0;
-                  const line = unit * (Number(it.qty) || 1);
-                  return (
-                    <li key={idx} style={row}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
-                        {it.image ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={it.image} alt={it.name} width={64} height={64} style={{ borderRadius: 8, objectFit: "cover", flexShrink: 0 }} />
-                        ) : (
-                          <div style={{ width: 64, height: 64, borderRadius: 8, background: "#f1f5f9" }} />
-                        )}
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontWeight: 800, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.name}</div>
-                          <div style={{ color: "#64748b", fontSize: 13 }}>NT$ {unit}</div>
-                        </div>
-                      </div>
-
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <button onClick={() => dec(idx)} style={qtyBtn}>－</button>
-                        <span style={{ minWidth: 24, textAlign: "center", fontWeight: 800 }}>{it.qty || 1}</span>
-                        <button onClick={() => inc(idx)} style={qtyBtn}>＋</button>
-                      </div>
-
-                      <div style={{ width: 100, textAlign: "right", fontWeight: 800 }}>NT$ {line}</div>
-
-                      <button onClick={() => removeAt(idx)} style={removeBtn}>移除</button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-
+    <div
+      style={{
+        background: BG,
+        minHeight: "100vh",
+        color: "white",
+        fontFamily:
+          "'Noto Sans TC','Microsoft JhengHei','PingFang TC',sans-serif",
+        paddingBottom: 60,
+      }}
+    >
+      {/* 置頂導覽 */}
+      <div
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 100,
+          borderBottom: `1px solid ${BORDER}`,
+          background:
+            "linear-gradient(90deg, rgba(59,130,246,.15), rgba(236,72,153,.15))",
+          backdropFilter: "blur(8px)",
+        }}
+      >
+        <div
+          style={{
+            maxWidth: 1040,
+            margin: "0 auto",
+            padding: "14px 16px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+          }}
+        >
+          <div style={{ fontWeight: 900, letterSpacing: 1 }}>🛒 購物清單</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={() => (window.location.href = "/")}
+              style={ghostBtn}
+            >
+              ⟵ 回首頁
+            </button>
             {items.length > 0 && (
-              <div style={{ marginTop: 12, textAlign: "right" }}>
-                <button onClick={clear} style={{ ...linkBtn, color: "#dc2626" }}>清空購物車</button>
-              </div>
+              <button onClick={clearAll} style={ghostBtn}>
+                清空
+              </button>
             )}
           </div>
-
-          {/* 摘要 */}
-          <aside style={card}>
-            <h3 style={{ fontSize: 16, fontWeight: 800, marginBottom: 8 }}>訂單摘要</h3>
-            <div style={pair}><span>商品小計</span><span>NT$ {subTotal}</span></div>
-            <div style={pair}><span>預估運費</span><span>NT$ {items.length ? shipping : 0}</span></div>
-            <div style={{ height: 1, background: "#eee", margin: "10px 0" }} />
-            <div style={{ ...pair, fontWeight: 900, fontSize: 18 }}><span>總計</span><span>NT$ {total}</span></div>
-
-            <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
-              <Link href="/" style={ghostBtn}>繼續購物</Link>
-              <button
-                onClick={() => router.push("/checkout")}
-                disabled={!items.length}
-                style={ctaBtn}
-              >
-                前往結帳
-              </button>
-            </div>
-          </aside>
         </div>
       </div>
-    </main>
+
+      {/* 清單 */}
+      <Panel>
+        {items.length === 0 ? (
+          <EmptyState />
+        ) : (
+          <>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 100px 140px 100px",
+                gap: 12,
+                padding: "10px 12px",
+                borderBottom: `1px solid ${BORDER}`,
+                color: TEXT_SUB,
+                fontSize: 13,
+              }}
+            >
+              <div>商品</div>
+              <div style={{ textAlign: "center" }}>數量</div>
+              <div style={{ textAlign: "right" }}>小計</div>
+              <div style={{ textAlign: "center" }}>操作</div>
+            </div>
+
+            {items.map((it, i) => (
+              <div
+                key={i}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 100px 140px 100px",
+                  gap: 12,
+                  padding: "14px 12px",
+                  alignItems: "center",
+                  borderBottom: `1px solid ${BORDER}`,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  {/* 縮圖 */}
+                  {it.image ? (
+                    <img
+                      src={it.image}
+                      alt={it.name}
+                      style={{
+                        width: 64,
+                        height: 64,
+                        objectFit: "cover",
+                        borderRadius: 10,
+                        border: `1px solid ${BORDER}`,
+                      }}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        width: 64,
+                        height: 64,
+                        borderRadius: 10,
+                        background: "rgba(255,255,255,.06)",
+                        border: `1px solid ${BORDER}`,
+                        display: "grid",
+                        placeItems: "center",
+                        color: TEXT_SUB,
+                        fontSize: 12,
+                      }}
+                    >
+                      無圖
+                    </div>
+                  )}
+                  <div>
+                    <div style={{ fontWeight: 800 }}>{it.name}</div>
+                    <div style={{ fontSize: 12, color: TEXT_SUB }}>
+                      單入原價 NT$ {Number(it.unitPrice || 0).toLocaleString()}
+                    </div>
+                    {/* 組合明細（如 3入×1 + 1入×1） */}
+                    {Array.isArray(it.calc) && it.calc.length > 0 && (
+                      <div style={{ marginTop: 4, fontSize: 12, color: TEXT_SUB }}>
+                        {it.calc.map(([pack, n, price], idx) => (
+                          <span key={idx} style={{ marginRight: 10 }}>
+                            {pack}入 × {n}（NT$ {price}）
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ textAlign: "center", fontWeight: 800 }}>{it.qty}</div>
+
+                <div style={{ textAlign: "right", fontWeight: 900, color: "#facc15" }}>
+                  NT$ {Number(it.total || 0).toLocaleString()}
+                </div>
+
+                <div style={{ textAlign: "center" }}>
+                  <button onClick={() => remove(i)} style={dangerBtn}>
+                    移除
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            {/* 結算區 */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 320px",
+                gap: 16,
+                marginTop: 16,
+              }}
+            >
+              {/* 左側：返回/繼續購物 */}
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <button
+                  onClick={() => (window.location.href = "/")}
+                  style={ghostBtn}
+                >
+                  ⟵ 繼續購物
+                </button>
+              </div>
+
+              {/* 右側：金額總結 + 去結帳 */}
+              <div
+                style={{
+                  background: "rgba(255,255,255,.04)",
+                  border: `1px solid ${BORDER}`,
+                  borderRadius: 14,
+                  padding: 16,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    color: TEXT_SUB,
+                    marginBottom: 6,
+                  }}
+                >
+                  <span>商品小計</span>
+                  <span>NT$ {subTotal.toLocaleString()}</span>
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    color: TEXT_SUB,
+                    marginBottom: 10,
+                  }}
+                >
+                  <span>運費（超商）</span>
+                  <span>NT$ {shipping.toLocaleString()}</span>
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    fontWeight: 900,
+                    fontSize: 18,
+                    marginBottom: 12,
+                  }}
+                >
+                  <span>應付總額</span>
+                  <span style={{ color: "#facc15" }}>
+                    NT$ {total.toLocaleString()}
+                  </span>
+                </div>
+
+                <button
+                  onClick={() => (window.location.href = "/checkout")}
+                  style={primaryBtn}
+                >
+                  前往結帳 →
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </Panel>
+    </div>
   );
 }
 
-const card = { background: "#fff", border: "1px solid #e5e7eb", borderRadius: 14, padding: 16, boxShadow: "0 6px 20px rgba(0,0,0,0.06)" };
-const row = { display: "grid", gridTemplateColumns: "1fr auto auto auto", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: "1px dashed #f1f5f9" };
-const qtyBtn = { width: 30, height: 30, borderRadius: 8, border: "1px solid #e5e7eb", background: "#fff", cursor: "pointer" };
-const removeBtn = { border: 0, background: "transparent", color: "#dc2626", cursor: "pointer", fontWeight: 700 };
-const ghostBtn = { display: "inline-block", padding: "10px 16px", borderRadius: 10, border: "1px solid #e5e7eb", textDecoration: "none", color: "#111" };
-const ctaBtn = { padding: "10px 16px", borderRadius: 10, border: 0, color: "#fff", background: "linear-gradient(90deg,#111,#444)", cursor: "pointer", boxShadow: "0 8px 16px rgba(0,0,0,0.15)" };
-const pair = { display: "flex", justifyContent: "space-between", marginBottom: 6 };
+/* ===== 空狀態 ===== */
+function EmptyState() {
+  return (
+    <div style={{ textAlign: "center", padding: "40px 10px" }}>
+      <div style={{ fontSize: 20, fontWeight: 900, marginBottom: 6 }}>
+        購物車是空的
+      </div>
+      <div style={{ color: TEXT_SUB, marginBottom: 14 }}>
+        先去逛逛，挑選你要的商品吧！
+      </div>
+      <button
+        onClick={() => (window.location.href = "/")}
+        style={primaryBtn}
+      >
+        返回首頁
+      </button>
+    </div>
+  );
+}
+
+/* ===== 按鈕樣式 ===== */
+const primaryBtn = {
+  width: "100%",
+  background: "linear-gradient(90deg,#f43f5e,#fb7185)",
+  color: "white",
+  border: 0,
+  borderRadius: 12,
+  padding: "12px 16px",
+  fontWeight: 900,
+  cursor: "pointer",
+  boxShadow: "0 6px 14px rgba(244,63,94,.25)",
+};
+
+const ghostBtn = {
+  background: "rgba(255,255,255,.06)",
+  color: "white",
+  border: `1px solid ${BORDER}`,
+  borderRadius: 999,
+  padding: "8px 14px",
+  fontWeight: 800,
+  cursor: "pointer",
+};
+
+const dangerBtn = {
+  background: "transparent",
+  color: "#fda4af",
+  border: `1px solid rgba(254, 205, 211, .35)`,
+  borderRadius: 999,
+  padding: "6px 10px",
+  fontWeight: 800,
+  cursor: "pointer",
+};

@@ -4,16 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 /**
- * 結帳頁（白底版）
- * - 配送：7-ELEVEN / 郵局
- * - 付款：7-ELEVEN → 信用卡 / ATM / 取貨付款(COD UI)；郵局 → 信用卡 / ATM
- * - 門市地圖：/api/cvs/start (藍新 B51) → /api/cvs/callback 回填
- * - 郵局：新增「收件地址」欄位，並在送單時帶到 customer.address
+ * 結帳頁（深藍底、美觀卡片版；使用 localStorage.cart 讀取購物車）
+ * 只做最小修改：加入「配送方式」單選、依選項顯示 地址/門市，送出 payload 對齊 /api/orders
  */
 export default function CheckoutPage() {
   const router = useRouter();
 
-  // 1) 購物車
+  // 從 localStorage 取購物車
   const [items, setItems] = useState([]);
   useEffect(() => {
     try {
@@ -25,7 +22,7 @@ export default function CheckoutPage() {
     }
   }, []);
 
-  // 2) 金額
+  // 金額
   const subTotal = useMemo(
     () =>
       items.reduce(
@@ -34,89 +31,54 @@ export default function CheckoutPage() {
       ),
     [items]
   );
-  const shippingFee = items.length ? 60 : 0;
-  const total = subTotal + shippingFee;
 
-  // 3) 表單
+  // 和 API 預設一致：宅配80、超商60、滿999免運
+  const HOME_FEE = 80;
+  const CVS_FEE = 60;
+  const FREE_SHIP_THRESHOLD = 999;
+
+  // 表單
   const [form, setForm] = useState({
-    name: "", phone: "", email: "",
-    sameAsBuyer: true, rName: "", rPhone: "", rEmail: "",
-    shipMethod: "CVS_7ELEVEN", // CVS_7ELEVEN | POST
-    payMethod: "CREDIT",       // CREDIT | ATM | COD (僅 7-11)
-    // 超商門市欄位
-    cvsStoreId: "", cvsStoreName: "", cvsAddress: "",
-    // 郵局宅配地址
-    postAddress: "",
+    name: "",
+    phone: "",
+    email: "",
+    sameAsBuyer: true,
+    rName: "",
+    rPhone: "",
+    rEmail: "",
+    // 🆕 配送方式與對應欄位
+    shipMethod: "", // "POST" | "CVS_NEWEBPAY"
+    address: "", // POST 用
+    pickupStore: "", // CVS_NEWEBPAY 用
     note: "",
   });
 
-  // 勾選「同購買人」→ 自動帶入
   useEffect(() => {
     if (form.sameAsBuyer) {
-      setForm((f) => ({ ...f, rName: f.name, rPhone: f.phone, rEmail: f.email }));
+      setForm((f) => ({
+        ...f,
+        rName: f.name,
+        rPhone: f.phone,
+        rEmail: f.email,
+      }));
     }
   }, [form.sameAsBuyer, form.name, form.phone, form.email]);
 
-  // 配送切換：郵局不允許 COD
-  useEffect(() => {
-    setForm((f) => (f.shipMethod === "POST" && f.payMethod === "COD" ? { ...f, payMethod: "CREDIT" } : f));
-  }, [form.shipMethod]);
+  // 運費顯示（依選項）
+  const shipFee = useMemo(() => {
+    if (!items.length) return 0;
+    const fee = form.shipMethod === "CVS_NEWEBPAY" ? CVS_FEE : HOME_FEE;
+    return subTotal >= FREE_SHIP_THRESHOLD ? 0 : fee;
+  }, [items.length, subTotal, form.shipMethod]);
 
-  const onChange = (e) => {
-    const { name, value, type, checked } = e.target;
-    setForm((f) => ({ ...f, [name]: type === "checkbox" ? checked : value }));
-  };
-
-  // ===== 門市地圖回傳：postMessage 監聽 + URL 備援回填 =====
-  useEffect(() => {
-    const allow = window.location.origin;
-    const onMsg = (e) => {
-      if (String(e.origin) !== allow) return;
-      if (e.data && e.data.type === "CVS_PICKED") {
-        const d = e.data.data || {};
-        setForm((f) => ({
-          ...f,
-          cvsStoreId: d.id || d.storeId || f.cvsStoreId,
-          cvsStoreName: d.name || d.storeName || f.cvsStoreName,
-          cvsAddress: d.address || d.storeAddress || f.cvsAddress,
-        }));
-      }
-    };
-    window.addEventListener("message", onMsg);
-
-    // 備援：讀 URL 參數（/checkout?sid=...&sn=...&sa=...）
-    try {
-      const p = new URLSearchParams(window.location.search);
-      const sid = p.get("sid"), sn = p.get("sn"), sa = p.get("sa");
-      if (sid || sn || sa) {
-        setForm((f) => ({
-          ...f,
-          cvsStoreId: sid || f.cvsStoreId,
-          cvsStoreName: sn || f.cvsStoreName,
-          cvsAddress: sa || f.cvsAddress,
-        }));
-        const u = new URL(window.location.href);
-        u.search = "";
-        window.history.replaceState({}, "", u.toString());
-      }
-    } catch {}
-
-    return () => window.removeEventListener("message", onMsg);
-  }, []);
-
-  // 打開門市地圖（C2C + 7-11）
-  const openCvsPicker = () => {
-    const w = 980, h = 700;
-    const left = window.screenX + Math.max(0, (window.outerWidth - w) / 2);
-    const top  = window.screenY + Math.max(0, (window.outerHeight - h) / 2);
-    window.open("/api/cvs/start?lgs=C2C&ship=1", "cvs_map",
-      `width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=yes`);
-  };
+  const total = subTotal + shipFee;
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  // 送出訂單
+  const onChange = (e) => setForm((f) => ({ ...f, [e.target.name]: e.target.value }));
+
+  // 送出
   const submit = async (e) => {
     e.preventDefault();
     setErr("");
@@ -125,17 +87,21 @@ export default function CheckoutPage() {
     if (!form.name || !form.phone || !form.email) return setErr("請填購買人姓名 / 手機 / Email。");
     if (!form.rName || !form.rPhone) return setErr("請填收件人姓名 / 手機。");
 
-    if (form.shipMethod === "CVS_7ELEVEN") {
-      if (!form.cvsStoreId || !form.cvsStoreName) {
-        return setErr("請先選擇 7-ELEVEN 取貨門市。");
-      }
-    } else {
-      if (!form.postAddress) return setErr("請填寫郵局宅配收件地址。");
+    // ✅ 必須讓客戶自己選配送方式
+    if (form.shipMethod !== "POST" && form.shipMethod !== "CVS_NEWEBPAY") {
+      return setErr("請選擇配送方式（郵局宅配或超商取貨）。");
+    }
+    if (form.shipMethod === "POST" && !form.address) {
+      return setErr("請填寫收件地址。");
+    }
+    if (form.shipMethod === "CVS_NEWEBPAY" && !form.pickupStore) {
+      return setErr("請輸入或選擇取貨門市。");
     }
 
     try {
       setLoading(true);
 
+      // 將購物車品項轉成 API 需要的格式
       const payloadItems = items.map((it) => ({
         id: it.id,
         name: it.name,
@@ -144,29 +110,22 @@ export default function CheckoutPage() {
         image: it.image ?? null,
       }));
 
-      const shippingMethod = form.shipMethod === "CVS_7ELEVEN" ? "CVS_NEWEBPAY" : "POST";
-
       const res = await fetch("/api/orders", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           items: payloadItems,
           customer: {
-            name: form.name,
-            phone: form.phone,
-            email: form.email,
+            name: form.rName,
+            phone: form.rPhone,
+            email: form.rEmail || null,
             note: form.note || null,
-            address: form.shipMethod === "POST" ? form.postAddress : null, // ★ 郵局帶地址
+            // 依配送方式擇一帶入
+            address: form.shipMethod === "POST" ? form.address : undefined,
+            pickupStore: form.shipMethod === "CVS_NEWEBPAY" ? form.pickupStore : undefined,
           },
-          receiver: { name: form.rName, phone: form.rPhone, email: form.rEmail || null },
-          shipping: {
-            method: shippingMethod,
-            store:
-              shippingMethod === "CVS_NEWEBPAY"
-                ? { id: form.cvsStoreId, name: form.cvsStoreName, address: form.cvsAddress }
-                : null,
-          },
-          payMethod: form.payMethod, // CREDIT | ATM | COD(7-11)
+          // ！！！！必填：method（和後端一致）
+          shipping: { method: form.shipMethod },
         }),
       });
 
@@ -176,26 +135,17 @@ export default function CheckoutPage() {
         return;
       }
 
+      // 清空 localStorage 購物車（你若有全域 CartProvider 再改這裡）
       localStorage.setItem("cart", JSON.stringify({ items: [] }));
-      router.push(`/orders/${data.orderNo}`);
+
+      const { orderNo } = data;
+      router.push(`/orders/${orderNo}`);
     } catch (e2) {
       setErr(String(e2?.message ?? e2));
     } finally {
       setLoading(false);
     }
   };
-
-  const payOptions =
-    form.shipMethod === "CVS_7ELEVEN"
-      ? [
-          { value: "CREDIT", label: "信用卡" },
-          { value: "ATM", label: "ATM 轉帳" },
-          { value: "COD", label: "取貨付款（7-ELEVEN）" },
-        ]
-      : [
-          { value: "CREDIT", label: "信用卡" },
-          { value: "ATM", label: "ATM 轉帳" },
-        ];
 
   return (
     <div className="page">
@@ -225,6 +175,7 @@ export default function CheckoutPage() {
               />
               同購買人
             </label>
+
             <div className="grid2">
               <Field label="姓名" req>
                 <input
@@ -256,105 +207,62 @@ export default function CheckoutPage() {
             </div>
           </Section>
 
+          {/* 🆕 配送方式（只新增，不動你的原樣式） */}
           <Section title="配送方式">
-            <div className="rowh">
-              <label className="radio">
-                <input
-                  type="radio"
-                  name="shipMethod"
-                  value="CVS_7ELEVEN"
-                  checked={form.shipMethod === "CVS_7ELEVEN"}
-                  onChange={onChange}
-                />
-                7-ELEVEN 超商取貨
-              </label>
-              <label className="radio">
+            <div className="check">
+              <label className="check">
                 <input
                   type="radio"
                   name="shipMethod"
                   value="POST"
                   checked={form.shipMethod === "POST"}
-                  onChange={onChange}
+                  onChange={(e) => setForm((f) => ({ ...f, shipMethod: e.target.value }))}
                 />
                 郵局宅配
+              </label>
+              <span style={{ width: 12 }} />
+              <label className="check">
+                <input
+                  type="radio"
+                  name="shipMethod"
+                  value="CVS_NEWEBPAY"
+                  checked={form.shipMethod === "CVS_NEWEBPAY"}
+                  onChange={(e) => setForm((f) => ({ ...f, shipMethod: e.target.value }))}
+                />
+                超商取貨（藍新）
               </label>
             </div>
           </Section>
 
-          {form.shipMethod === "CVS_7ELEVEN" && (
-            <Section title="取貨門市">
-              <div className="grid2">
-                <Field label="門市代號" req>
-                  <input
-                    name="cvsStoreId"
-                    value={form.cvsStoreId}
-                    onChange={onChange}
-                    className="input"
-                    placeholder="例如：935392"
-                  />
-                </Field>
-                <Field label="門市名稱" req>
-                  <input
-                    name="cvsStoreName"
-                    value={form.cvsStoreName}
-                    onChange={onChange}
-                    className="input"
-                    placeholder="例如：松福門市"
-                  />
-                </Field>
-                <Field label="門市地址" full>
-                  <input
-                    name="cvsAddress"
-                    value={form.cvsAddress}
-                    onChange={onChange}
-                    className="input"
-                    placeholder="門市完整地址"
-                  />
-                </Field>
-              </div>
-              <div style={{ marginTop: 8 }}>
-                <button type="button" className="btn-light" onClick={openCvsPicker}>
-                  選擇門市（藍新地圖）
-                </button>
-                <span className="hint" style={{ marginLeft: 8 }}>
-                  選完會自動回填門市欄位。
-                </span>
-              </div>
-            </Section>
-          )}
-
-          {form.shipMethod === "POST" && (
-            <Section title="收件地址（郵局宅配）">
-              <input
-                name="postAddress"
-                value={form.postAddress}
-                onChange={onChange}
-                className="input"
-                placeholder="請輸入完整收件地址（道路、門牌、樓層…）"
-              />
-              <p className="hint">未填寫地址將無法送單。</p>
-            </Section>
-          )}
+          {/* 你原本的區塊保留。內容依選項顯示對應欄位（地址／門市） */}
+          <Section title="取貨門市">
+            {form.shipMethod === "POST" ? (
+              <>
+                <input
+                  name="address"
+                  value={form.address}
+                  onChange={onChange}
+                  placeholder="請填寫完整地址"
+                  className="input"
+                />
+                <p className="hint">宅配請填寫收件地址。</p>
+              </>
+            ) : (
+              <>
+                <input
+                  name="pickupStore"
+                  value={form.pickupStore}
+                  onChange={onChange}
+                  placeholder="例：7-ELEVEN 松福門市（935392）"
+                  className="input"
+                />
+                <p className="hint">請手動輸入門市名稱（之後可串藍新地圖）。</p>
+              </>
+            )}
+          </Section>
 
           <Section title="付款方式">
-            <div className="rowh">
-              {payOptions.map((opt) => (
-                <label key={opt.value} className="radio">
-                  <input
-                    type="radio"
-                    name="payMethod"
-                    value={opt.value}
-                    checked={form.payMethod === opt.value}
-                    onChange={onChange}
-                    disabled={form.shipMethod === "POST" && opt.value === "COD"}
-                  />
-                  {opt.label}
-                </label>
-              ))}
-            </div>
-            {form.payMethod === "COD" && form.shipMethod === "CVS_7ELEVEN" && (
-              <p className="hint">取貨付款為物流代收，第二階段會串接藍新物流下單與代收款結帳。</p>
-            )}
+            <div className="pill">ATM 轉帳</div>
           </Section>
 
           <Section title="訂單備註">
@@ -391,22 +299,22 @@ export default function CheckoutPage() {
             <span>NT$ {subTotal}</span>
           </div>
           <div className="row sub">
-            <span>運費</span>
-            <span>NT$ {shippingFee}</span>
+            <span>運費（{form.shipMethod === "CVS_NEWEBPAY" ? "超商" : "宅配"}）</span>
+            <span>NT$ {shipFee}</span>
           </div>
           <div className="row total">
-            <span>應付總計</span>
+            <span>總計</span>
             <span>NT$ {total}</span>
           </div>
         </aside>
       </div>
 
-      {/* ---- 白底樣式 ---- */}
+      {/* 版面與配色樣式（完全保留原樣） */}
       <style jsx>{`
         .page {
           min-height: 100vh;
-          background: #ffffff;               /* 白底 */
-          color: #111827;                    /* 深灰字 */
+          background: #0f172a; /* 深藍底 */
+          color: #e5e7eb;
           font-family: 'Noto Sans TC', 'Microsoft JhengHei', 'PingFang TC', system-ui, sans-serif;
           padding: 32px 14px 60px;
         }
@@ -419,24 +327,34 @@ export default function CheckoutPage() {
         }
         @media (min-width: 980px) {
           .wrap {
-            grid-template-columns: 1.2fr 0.8fr;
+            grid-template-columns: 1.2fr 0.8fr; /* 穩定雙欄 */
             gap: 22px;
           }
         }
+
         .card {
-          background: #ffffff;
-          border: 1px solid #e5e7eb;
+          background: #111827; /* 深灰藍卡片 */
+          border: 1px solid rgba(255, 255, 255, 0.08);
           border-radius: 16px;
           padding: 20px 18px;
-          box-shadow: 0 6px 20px rgba(17, 24, 39, 0.06);
+          box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
         }
-        .stitle, .title {
+
+        .stitle {
           font-weight: 800;
           font-size: 18px;
           margin-bottom: 10px;
-          color: #111827;
+          color: #fff;
         }
-        .section { margin-bottom: 18px; }
+        .title {
+          font-weight: 800;
+          font-size: 18px;
+          color: #fff;
+          margin-bottom: 10px;
+        }
+        .section {
+          margin-bottom: 18px;
+        }
 
         .grid2 {
           display: grid;
@@ -447,49 +365,60 @@ export default function CheckoutPage() {
           .grid2 {
             grid-template-columns: 1fr 1fr;
           }
-          .grid2 :global(.full) { grid-column: 1 / -1; }
+          .grid2 :global(.full) {
+            grid-column: 1 / -1;
+          }
         }
 
         .label {
           font-size: 13px;
-          color: #374151;
+          color: #cbd5e1;
           display: block;
           margin-bottom: 6px;
         }
-        .req { color: #ef4444; margin-left: 2px; }
+        .req {
+          color: #f43f5e;
+          margin-left: 2px;
+        }
 
         .input {
           width: 100%;
           border-radius: 10px;
-          border: 1px solid #e5e7eb;
-          background: #ffffff;
-          color: #111827;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          background: #0b1220;
+          color: #fff;
           padding: 10px 12px;
           outline: none;
         }
-        .input:disabled { background: #f9fafb; color: #6b7280; }
+        .input:disabled {
+          background: #0e1628;
+          color: #9aa7b5;
+        }
 
-        .hint { margin-top: 6px; font-size: 12px; color: #6b7280; }
+        .hint {
+          margin-top: 6px;
+          font-size: 12px;
+          color: #93a3b8;
+        }
 
-        .check, .radio {
+        .pill {
+          display: inline-block;
+          padding: 8px 12px;
+          border-radius: 999px;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          background: rgba(255, 255, 255, 0.06);
+          color: #e5e7eb;
+          font-weight: 700;
+          font-size: 13px;
+        }
+
+        .check {
           display: inline-flex;
           align-items: center;
           gap: 8px;
-          font-size: 14px;
-          color: #111827;
-          margin-right: 14px;
-        }
-        .rowh { display: flex; flex-wrap: wrap; gap: 10px 16px; }
-
-        .btn-light {
-          display: inline-block;
-          padding: 9px 14px;
-          border-radius: 10px;
-          border: 1px solid #e5e7eb;
-          background: #ffffff;
-          color: #111827;
-          font-weight: 700;
-          cursor: pointer;
+          font-size: 13px;
+          color: #cbd5e1;
+          margin-bottom: 10px;
         }
 
         .cta {
@@ -499,38 +428,67 @@ export default function CheckoutPage() {
           padding: 12px 18px;
           font-weight: 900;
           color: #fff;
-          background: linear-gradient(90deg, #3b82f6, #60a5fa);
-          box-shadow: 0 10px 18px rgba(59, 130, 246, 0.25);
+          background: linear-gradient(90deg, #f43f5e, #fb7185);
+          box-shadow: 0 10px 18px rgba(244, 63, 94, 0.25);
           cursor: pointer;
         }
-        .cta:disabled { opacity: 0.6; cursor: not-allowed; }
+        .cta:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
 
         .error {
-          background: #fef2f2;
-          border: 1px solid #fecaca;
-          color: #991b1b;
+          background: rgba(254, 226, 226, 0.1);
+          border: 1px solid rgba(248, 113, 113, 0.4);
+          color: #fecaca;
           border-radius: 10px;
           padding: 10px 12px;
           margin-bottom: 12px;
           font-size: 14px;
         }
 
-        .list { border-top: 1px dashed #e5e7eb; margin-top: 6px; }
-        .row {
-          display: flex; justify-content: space-between; align-items: center; gap: 8px;
-          padding: 10px 0; border-bottom: 1px dashed #e5e7eb;
+        .list {
+          border-top: 1px dashed rgba(255, 255, 255, 0.12);
+          margin-top: 6px;
         }
-        .name { font-size: 14px; color: #374151; }
-        .price { font-size: 14px; font-weight: 800; color: #111827; }
-        .sep { height: 1px; background: #e5e7eb; margin: 8px 0; }
-        .sub { color: #374151; font-size: 14px; }
-        .total { font-weight: 900; color: #111827; font-size: 18px; margin-top: 4px; }
+        .row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 0;
+          border-bottom: 1px dashed rgba(255, 255, 255, 0.08);
+        }
+        .name {
+          font-size: 14px;
+          color: #e5e7eb;
+        }
+        .price {
+          font-size: 14px;
+          font-weight: 800;
+          color: #facc15;
+        }
+        .sep {
+          height: 1px;
+          background: rgba(255, 255, 255, 0.1);
+          margin: 8px 0;
+        }
+        .sub {
+          color: #cbd5e1;
+          font-size: 14px;
+        }
+        .total {
+          font-weight: 900;
+          color: #facc15;
+          font-size: 18px;
+          margin-top: 4px;
+        }
       `}</style>
     </div>
   );
 }
 
-/* 小元件 */
+/* 小元件：段落 + 標籤/欄位（保持不變） */
 function Section({ title, children }) {
   return (
     <div className="section">
