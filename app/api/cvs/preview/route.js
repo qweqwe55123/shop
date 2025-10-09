@@ -4,47 +4,51 @@ import crypto from "crypto";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const pick = (k) => (process.env[k] == null ? "" : String(process.env[k]).trim());
+
 function aesEncryptBase64(plain, key, iv) {
-  const cipher = crypto.createCipheriv(
-    "aes-256-cbc",
-    Buffer.from(key, "utf8"),
-    Buffer.from(iv, "utf8")
-  );
+  const cipher = crypto.createCipheriv("aes-256-cbc", Buffer.from(key, "utf8"), Buffer.from(iv, "utf8"));
   const enc = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
-  return enc.toString("base64"); // base64
+  return enc.toString("base64");
 }
 function sha256Upper(s) {
   return crypto.createHash("sha256").update(s).digest("hex").toUpperCase();
 }
-const esc = (s) =>
-  String(s).replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
+const esc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ "<":"&lt;", ">":"&gt;", "&":"&amp;" }[c]));
 
 export async function GET(req) {
   const url = new URL(req.url);
 
-  // 優先用物流專用憑證，沒有才退回金流那組
-  const UID = process.env.NEWEBPAY_LOGISTICS_UID || process.env.NEWEBPAY_MERCHANT_ID || "";
-  const HASH_KEY = process.env.NEWEBPAY_LOGISTICS_HASH_KEY || process.env.NEWEBPAY_HASH_KEY || "";
-  const HASH_IV = process.env.NEWEBPAY_LOGISTICS_HASH_IV || process.env.NEWEBPAY_HASH_IV || "";
+  // 優先用物流憑證，其次用金流憑證
+  const LOG_UID = pick("NEWEBPAY_LOGISTICS_UID");
+  const LOG_KEY = pick("NEWEBPAY_LOGISTICS_HASH_KEY");
+  const LOG_IV  = pick("NEWEBPAY_LOGISTICS_HASH_IV");
 
-  const clientBase = process.env.CLIENT_BASE_URL || url.origin;
+  const PAY_MER = pick("NEWEBPAY_MERCHANT_ID");
+  const PAY_KEY = pick("NEWEBPAY_HASH_KEY");
+  const PAY_IV  = pick("NEWEBPAY_HASH_IV");
 
-  // EncryptData 內容（依手冊）
+  const USE_LOGISTICS = !!(LOG_UID && LOG_KEY && LOG_IV);
+  const UID = USE_LOGISTICS ? LOG_UID : PAY_MER;
+  const KEY = USE_LOGISTICS ? LOG_KEY : PAY_KEY;
+  const IV  = USE_LOGISTICS ? LOG_IV  : PAY_IV;
+
+  const which = USE_LOGISTICS ? "logistics" : (UID && KEY && IV ? "payment" : "none");
+
+  const clientBase = pick("CLIENT_BASE_URL") || url.origin;
+
   const encObj = {
     MerchantOrderNo: `MAP_${Date.now().toString(36)}`.slice(0, 30),
-    LgsType: url.searchParams.get("lgs") || "C2C",
-    ShipType: url.searchParams.get("ship") || "1", // 1=7-11
+    LgsType  : url.searchParams.get("lgs")  || "C2C",
+    ShipType : url.searchParams.get("ship") || "1", // 1: 7-11
     ReturnURL: `${clientBase}/api/cvs/callback`,
     TimeStamp: Math.floor(Date.now() / 1000).toString(),
   };
   const encStr = new URLSearchParams(encObj).toString();
 
-  const EncryptData_ = UID && HASH_KEY && HASH_IV ? aesEncryptBase64(encStr, HASH_KEY, HASH_IV) : "";
-  const HashData_ = EncryptData_
-    ? sha256Upper(`HashKey=${HASH_KEY}&EncryptData=${EncryptData_}&HashIV=${HASH_IV}`)
-    : "";
+  const EncryptData_ = UID && KEY && IV ? aesEncryptBase64(encStr, KEY, IV) : "";
+  const HashData_    = EncryptData_ ? sha256Upper(`HashKey=${KEY}&EncryptData=${EncryptData_}&HashIV=${IV}`) : "";
 
-  // ★ 欄位名要有底線（依手冊）
   const fields = {
     UID_: UID,
     Version_: "1.0",
@@ -53,27 +57,32 @@ export async function GET(req) {
     HashData_: HashData_,
   };
 
+  const debugRows = `
+    <tr><td>using</td><td>${esc(which)}</td></tr>
+    <tr><td>UID length</td><td>${UID ? UID.length : 0}</td></tr>
+    <tr><td>KEY length</td><td>${KEY ? KEY.length : 0}</td></tr>
+    <tr><td>IV length</td><td>${IV ? IV.length : 0}</td></tr>
+  `;
+
   const rows = Object.entries(fields)
-    .map(
-      ([k, v]) =>
-        `<tr><td style="padding:6px;border:1px solid #ddd">${esc(k)}</td><td style="padding:6px;border:1px solid #ddd;word-break:break-all">${esc(
-          v
-        )}</td></tr>`
-    )
+    .map(([k, v]) => `<tr><td>${esc(k)}</td><td style="word-break:break-all">${esc(v)}</td></tr>`)
     .join("");
 
   const hidden = Object.entries(fields)
     .map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`)
     .join("");
 
-  const MAP_URL =
-    process.env.NEWEBPAY_LOGISTICS_MAP_URL || "https://ccore.newebpay.com/API/Logistic/storeMap";
+  const MAP_URL = pick("NEWEBPAY_LOGISTICS_MAP_URL") || "https://ccore.newebpay.com/API/Logistic/storeMap";
   const sha = (process.env.VERCEL_GIT_COMMIT_SHA || "").slice(0, 7);
 
-  const html = `<!doctype html><meta charset="utf-8">
+  const html = `<!doctype html><meta charset="utf-8" />
   <h3>NewebPay storeMap - Preview (build ${esc(sha)})</h3>
-  <p>確認下列 5 個欄位<span style="font-weight:700">都有值</span>（EncryptData_ 為 Base64 會帶 <code>/ + =</code>）。OK 後再按下方送出。</p>
-  <table style="border-collapse:collapse">${rows}</table>
+  <table border="1" cellpadding="6" cellspacing="0">
+    <tr><th colspan="2">env check</th></tr>
+    ${debugRows}
+    <tr><th colspan="2">post fields</th></tr>
+    ${rows}
+  </table>
   <form method="post" action="${esc(MAP_URL)}" accept-charset="UTF-8" style="margin-top:12px">
     ${hidden}
     <button type="submit">POST 到藍新 (storeMap)</button>
